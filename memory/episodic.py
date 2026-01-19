@@ -1,0 +1,3 @@
+/Users/usmri/Desktop/clm/meridian/memory/episodic.py
+
+Two SQLAlchemy 2.0 async ORM models (`SessionModel`, `MessageModel`) backed by PostgreSQL with a JSONB metadata column. `EpisodicMemory` accepts an explicit `db_url` or falls back to `DBSettings` which reads `MERIDIAN_DB_URL` from env/`.env`. All five async methods are implemented; `create_tables()` runs `metadata.create_all` through the async engine. `save_session` uses `merge` so it is idempotent on re-runs with the same UUID.
