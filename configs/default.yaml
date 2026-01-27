@@ -1,0 +1,57 @@
+agent:
+  model: claude-sonnet-4-6
+  temperature: 0.1
+  max_tokens: 4096
+  max_research_iterations: 3
+
+planner:
+  max_subtasks: 4
+
+researcher:
+  max_tools_per_task: 5
+  semantic_cache_threshold: 0.85
+
+critic:
+  min_findings_required: 2
+
+synthesizer:
+  max_citations: 10
+  include_confidence_scores: true
+
+memory:
+  episodic:
+    enabled: true
+  semantic:
+    enabled: true
+    top_k: 5
+    index_path: data/faiss_index
+    embedding_model: all-MiniLM-L6-v2
+  procedural:
+    enabled: true
+
+tools:
+  tavily:
+    max_results: 5
+    search_depth: advanced
+  arxiv:
+    max_results: 5
+  wikipedia:
+    sections: 3
+  pdf_parser:
+    max_pages: 10
+    max_chars: 5000
+  code_executor:
+    timeout_seconds: 10
+    memory_limit_mb: 128
+
+evaluation:
+  mlflow_experiment: meridian-evals
+  metrics:
+    - faithfulness
+    - answer_relevancy
+    - context_recall
+    - hallucination_score
+
+logging:
+  level: INFO
+  format: json
