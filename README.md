@@ -97,5 +97,4 @@ mlflow ui --port 5000
 | What is the evidence for neuroplasticity in adult brains? | 0.87 | 0.85 | 0.82 |
 
 ## License
-
 MIT
