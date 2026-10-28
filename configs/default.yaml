@@ -1,57 +1,47 @@
-agent:
-  model: claude-sonnet-4-6
-  temperature: 0.1
-  max_tokens: 4096
-  max_research_iterations: 3
+# Meridian configuration. Environment variables (or .env) supply the API keys.
 
-planner:
+llm:
+  provider: groq
+  providers:
+    groq:
+      base_url: https://api.groq.com/openai/v1
+      api_key_env: GROQ_API_KEY
+      requests_per_minute: 25          # free tier allows 30; stay under it
+  # Model per agent role. Any model the provider serves works. Groq's free tier
+  # allows 8k tokens a minute per model, so the roles are spread over three.
+  models:
+    planner: openai/gpt-oss-120b
+    researcher: qwen/qwen3.8-27b        # writes search queries: fast and cheap is enough
+    critic: openai/gpt-oss-120b         # follows the coverage instructions; 20b repeated gaps verbatim
+    synthesizer: openai/gpt-oss-120b
+    judge: qwen/qwen3.8-27b             # RAGAS; not the model that wrote the answers
+  # Extra request parameters per model. gpt-oss models reason before answering and
+  # the reasoning counts against max_tokens, hence low effort and a higher floor.
+  model_params:
+    openai/gpt-oss-120b: {reasoning_effort: low, max_tokens_floor: 2048}
+    openai/gpt-oss-20b: {reasoning_effort: low, max_tokens_floor: 2048}
+  cache_path: data/llm_cache.sqlite
+
+agent:
+  max_research_iterations: 2           # critic → researcher loops after the first pass
   max_subtasks: 4
 
 researcher:
-  max_tools_per_task: 5
-  semantic_cache_threshold: 0.85
-
-critic:
-  min_findings_required: 2
+  findings_per_subtask: 5
+  semantic_cache_threshold: 0.92       # cosine similarity to reuse earlier findings
+  finding_chars: 1200
 
 synthesizer:
-  max_citations: 10
-  include_confidence_scores: true
-
-memory:
-  episodic:
-    enabled: true
-  semantic:
-    enabled: true
-    top_k: 5
-    index_path: data/faiss_index
-    embedding_model: all-MiniLM-L6-v2
-  procedural:
-    enabled: true
+  max_sources: 10
 
 tools:
-  tavily:
-    max_results: 5
-    search_depth: advanced
-  arxiv:
-    max_results: 5
-  wikipedia:
-    sections: 3
-  pdf_parser:
-    max_pages: 10
-    max_chars: 5000
-  code_executor:
-    timeout_seconds: 10
-    memory_limit_mb: 128
+  enabled: [wikipedia, arxiv, web_search, read_pdf, python]
+  timeout_s: 15
+  # Tavily if TAVILY_API_KEY is set, else You.com's free endpoint. Hard cap per UTC day,
+  # shared by every session and the evaluation; nothing over it is ever sent.
+  web_search_daily_limit: 100
 
-evaluation:
-  mlflow_experiment: meridian-evals
-  metrics:
-    - faithfulness
-    - answer_relevancy
-    - context_recall
-    - hallucination_score
-
-logging:
-  level: INFO
-  format: json
+memory:
+  db_path: data/meridian.sqlite
+  semantic_index_dir: data/semantic
+  embedding_model: BAAI/bge-small-en-v1.5
