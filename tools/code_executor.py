@@ -1,10 +1,58 @@
-/Users/usmri/Desktop/clm/meridian/tools/code_executor.py
+"""Run a short Python snippet in a separate, restricted interpreter.
 
-Key implementation decisions:
+Isolation: a fresh `python -I` process (no user site-packages, no PYTHON*
+environment), an empty environment and a throwaway working directory, with
+limits on CPU time, memory, file size and wall-clock time. It does not block
+network access, so treat it as a calculator for the researcher, not a sandbox
+for untrusted code.
+"""
+from __future__ import annotations
 
-- `_sanitize` runs two passes: forbidden-pattern check on raw code, then strips the three banned import lines (`import os/sys/subprocess`, `from os/sys/subprocess`), then re-checks the stripped result so stripping cannot be used to launder a forbidden construct.
-- Forbidden patterns cover `os.system`, `subprocess`, `open(`, `socket`, `requests`, `urllib`, `eval`, `exec`, `compile`, `__import__`, `importlib`, `ctypes`, `pickle`, `shutil`, `pathlib`, `glob`.
-- Code is written to a `NamedTemporaryFile` (`.py`) and run as `python3 <file>` rather than `-c` so multi-line scripts work correctly; the file is always deleted in a `finally` block.
-- Resource limits (`RLIMIT_CPU` 5s, `RLIMIT_AS` 128 MB) are applied via `preexec_fn` on Linux only; on macOS/Windows the process still has the 10-second `subprocess.run` timeout as a backstop.
-- `asyncio.to_thread` keeps the event loop unblocked during subprocess execution.
-- `ToolResult.success` is `True` only when `returncode == 0` and no security rejection occurred; `stderr` is always included in `metadata` regardless of success.
+import asyncio
+import resource
+import sys
+import tempfile
+
+from agents.state import Finding
+from tools.base import ToolError
+
+CPU_SECONDS = 5
+MEMORY_BYTES = 512 * 1024 * 1024
+OUTPUT_CHARS = 4000
+
+
+def _limits() -> None:
+    resource.setrlimit(resource.RLIMIT_CPU, (CPU_SECONDS, CPU_SECONDS))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (1 << 20, 1 << 20))
+    try:  # not enforced on macOS, effective on Linux
+        resource.setrlimit(resource.RLIMIT_AS, (MEMORY_BYTES, MEMORY_BYTES))
+    except (ValueError, OSError):
+        pass
+
+
+class PythonTool:
+    name = "python"
+    description = "Run Python code and return what it prints. Use for arithmetic, unit conversion, quick calculations."
+
+    def __init__(self, timeout_s: float = 10) -> None:
+        self.timeout_s = timeout_s
+
+    async def run(self, query: str) -> list[Finding]:
+        out, err, code = await self.execute(query)
+        if code != 0:
+            raise ToolError(f"exit {code}: {err[-500:]}")
+        return [Finding(title="Python computation", url="python://local", tool=self.name, query=query,
+                        content=f"Code:\n{query}\n\nOutput:\n{out}")]
+
+    async def execute(self, code: str) -> tuple[str, str, int]:
+        with tempfile.TemporaryDirectory() as cwd:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-I", "-c", code, cwd=cwd, env={}, preexec_fn=_limits,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            try:
+                out, err = await asyncio.wait_for(proc.communicate(), self.timeout_s)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return "", "timed out", -9
+        return out.decode(errors="replace")[:OUTPUT_CHARS], err.decode(errors="replace")[:OUTPUT_CHARS], proc.returncode
