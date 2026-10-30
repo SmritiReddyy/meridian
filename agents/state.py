@@ -1,68 +1,70 @@
+"""Shared state for the LangGraph pipeline.
+
+Planner → Researcher → Critic ─(gaps)→ Researcher … → Synthesizer.
+Nodes return partial updates; list fields marked `operator.add` accumulate.
+"""
 from __future__ import annotations
-from typing import Annotated, Any
-from pydantic import BaseModel, Field
+
 import operator
+from typing import Annotated
+
+from pydantic import BaseModel, Field
 
 
 class Finding(BaseModel):
-    source: str
+    """One piece of evidence: a passage and where it came from."""
+    title: str
+    url: str
     content: str
-    url: str | None = None
-    relevance_score: float = 1.0
-    tool_used: str = ""
+    tool: str                 # wikipedia | arxiv | web_search | pdf | python
+    query: str = ""
+    subtask_id: str = ""
+    score: float = 0.0        # similarity to the sub-task it was gathered for
 
 
 class SubTask(BaseModel):
     id: str
     question: str
-    assigned_to: str = "researcher"
-    status: str = "pending"  # pending | in_progress | done
-    findings: list[Finding] = Field(default_factory=list)
+    origin: str = "planner"   # planner | critic
+    done: bool = False
+    queries: list[str] = Field(default_factory=list)   # tool calls the researcher ran for it
 
 
 class Citation(BaseModel):
     id: int
-    source: str
-    url: str | None = None
-    excerpt: str = ""
+    title: str
+    url: str
+    snippet: str
 
 
-class AgentMessage(BaseModel):
+class AgentEvent(BaseModel):
     agent: str
     content: str
-    timestamp: str = ""
+    data: dict = Field(default_factory=dict)
 
 
 class ResearchState(BaseModel):
-    # Input
     session_id: str
-    original_question: str
+    question: str
 
-    # Planner output
-    sub_tasks: list[SubTask] = Field(default_factory=list)
-    research_plan: str = ""
+    plan: str = ""
+    subtasks: Annotated[list[SubTask], operator.add] = Field(default_factory=list)
+    findings: Annotated[list[Finding], operator.add] = Field(default_factory=list)
 
-    # Researcher output
-    all_findings: Annotated[list[Finding], operator.add] = Field(default_factory=list)
-    current_task_idx: int = 0
-
-    # Critic output
+    iterations: int = 0           # critic passes completed
     critique: str = ""
-    needs_more_research: bool = False
-    research_iterations: int = 0
-    gaps: list[str] = Field(default_factory=list)
+    sufficient: bool = False
 
-    # Synthesizer output
-    final_answer: str = ""
+    answer: str = ""
     citations: list[Citation] = Field(default_factory=list)
-    confidence_scores: dict[str, float] = Field(default_factory=dict)
+    confidence: dict[str, float] = Field(default_factory=dict)
 
-    # Streaming log
-    agent_log: Annotated[list[AgentMessage], operator.add] = Field(default_factory=list)
-
-    # Error tracking
+    events: Annotated[list[AgentEvent], operator.add] = Field(default_factory=list)
     errors: Annotated[list[str], operator.add] = Field(default_factory=list)
 
-
-# Resolve forward references now that all classes are defined
-SubTask.model_rebuild()
+    def pending(self) -> list[SubTask]:
+        """Sub-tasks the researcher has not handled yet (latest copy of each id wins)."""
+        latest: dict[str, SubTask] = {}
+        for t in self.subtasks:
+            latest[t.id] = t
+        return [t for t in latest.values() if not t.done]
