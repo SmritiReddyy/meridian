@@ -1,0 +1,98 @@
+{
+  "critic": {
+    "questions": 25,
+    "scored": 25,
+    "faithfulness": {
+      "mean": 0.862,
+      "ci95": 0.066,
+      "n": 23
+    },
+    "answer_relevancy": {
+      "mean": 0.898,
+      "ci95": 0.075,
+      "n": 25
+    },
+    "context_recall": {
+      "mean": 0.767,
+      "ci95": 0.113,
+      "n": 25
+    },
+    "seconds_p50": 43.1,
+    "seconds_p90": 100.86,
+    "llm_calls_per_question": 7.9,
+    "tokens_per_question": 8924,
+    "sources_cited_per_answer": 3.4,
+    "invalid_citation_rate": 0.0,
+    "critic_loops_triggered": 11,
+    "tool_errors": 5,
+    "hallucination_rate": 0.138
+  },
+  "no_critic": {
+    "questions": 25,
+    "scored": 25,
+    "faithfulness": {
+      "mean": 0.797,
+      "ci95": 0.066,
+      "n": 23
+    },
+    "answer_relevancy": {
+      "mean": 0.904,
+      "ci95": 0.076,
+      "n": 25
+    },
+    "context_recall": {
+      "mean": 0.673,
+      "ci95": 0.134,
+      "n": 25
+    },
+    "seconds_p50": 752.62,
+    "seconds_p90": 1167.52,
+    "llm_calls_per_question": 5.5,
+    "tokens_per_question": 3017,
+    "sources_cited_per_answer": 3.3,
+    "invalid_citation_rate": 0.0,
+    "critic_loops_triggered": 0,
+    "tool_errors": 0,
+    "hallucination_rate": 0.203
+  },
+  "paired": {
+    "faithfulness": {
+      "n": 21,
+      "on": 0.867,
+      "off": 0.795,
+      "diff": 0.072,
+      "critic_higher": 10,
+      "critic_lower": 2,
+      "tied": 9
+    },
+    "answer_relevancy": {
+      "n": 25,
+      "on": 0.898,
+      "off": 0.904,
+      "diff": -0.006,
+      "critic_higher": 7,
+      "critic_lower": 7,
+      "tied": 11
+    },
+    "context_recall": {
+      "n": 25,
+      "on": 0.767,
+      "off": 0.673,
+      "diff": 0.093,
+      "critic_higher": 4,
+      "critic_lower": 0,
+      "tied": 21
+    }
+  },
+  "models": {
+    "planner": "openai/gpt-oss-120b",
+    "researcher": "qwen/qwen3.8-27b",
+    "critic": "openai/gpt-oss-120b",
+    "synthesizer": "openai/gpt-oss-120b"
+  },
+  "judges": {
+    "faithfulness": "qwen/qwen3.8-27b",
+    "context_recall": "openai/gpt-oss-20b",
+    "answer_relevancy": "openai/gpt-oss-120b"
+  }
+}
