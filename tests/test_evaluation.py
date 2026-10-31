@@ -1,28 +1,32 @@
-/Users/usmri/Desktop/clm/meridian/tests/test_evaluation.py
-
-```python
-from __future__ import annotations
-
 import json
-import os
-import tempfile
-from datetime import datetime, timezone
-from typing import Any, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+import evaluation.report as report
 
-from evaluation.ragas_eval import EvalResult, RAGASEvaluator
-```
 
-The file covers:
+def _write(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
-**TestRAGASEvaluator**
-- `test_evaluate_returns_scores` — patches `ragas.evaluate` (via `evaluation.ragas_eval.evaluate`) to return a pandas-backed mock and patches `anthropic.Anthropic` so `score_hallucination` returns 0.88; asserts every field of `EvalResult` is populated correctly.
-- `test_hallucination_scorer_high` — Claude mock returns `"0.95"`; asserts `score_hallucination` returns `0.95`.
-- `test_hallucination_scorer_low` — Claude mock returns `"0.1"`; asserts `score_hallucination` returns `0.1`.
-- `test_overall_score_weighted` — runs two sub-cases (with and without `ground_truth`) using exact known inputs and validates the weighted formula from the source (`0.35/0.30/0.20/0.15` and `0.40/0.35/0.25`).
 
-**TestEvaluationRunner**
-- `test_run_single_logs_to_mlflow` — patches `graph.ainvoke`, `RAGASEvaluator`, and `mlflow`; asserts `mlflow.log_metric` or `mlflow.log_metrics` was called.
-- `test_run_benchmark_processes_all` — writes a two-line JSONL to a temp file, patches `run_single`, and asserts both questions were dispatched and two results returned.
+def test_summary_aggregates_runs_and_scores(tmp_path, monkeypatch):
+    monkeypatch.setattr(report, "RESULTS", tmp_path)
+    usage = {"planner": {"calls": 1, "cached": 0, "prompt_tokens": 100, "completion_tokens": 50},
+             "synthesizer": {"calls": 1, "cached": 0, "prompt_tokens": 900, "completion_tokens": 300}}
+    _write(tmp_path / "runs" / "critic.jsonl", [
+        {"id": "q1", "citations": [{}, {}], "invalid_citations": [], "critic_iterations": 2, "tool_errors": [],
+         "seconds": 10.0, "usage": usage},
+        {"id": "q2", "citations": [{}], "invalid_citations": [7], "critic_iterations": 1, "tool_errors": ["x"],
+         "seconds": 20.0, "usage": usage},
+    ])
+    _write(tmp_path / "scores" / "critic.jsonl", [
+        {"id": "q1", "faithfulness": 1.0, "answer_relevancy": 0.9, "context_recall": 0.5},
+        {"id": "q2", "faithfulness": 0.8, "answer_relevancy": None, "context_recall": 1.0},
+    ])
+    s = report.summarize("critic")
+    assert s["faithfulness"]["mean"] == 0.9 and s["faithfulness"]["n"] == 2
+    assert s["answer_relevancy"]["n"] == 1          # a metric the judge could not score is left out, not zeroed
+    assert s["hallucination_rate"] == 0.1
+    assert s["tokens_per_question"] == 1350 and s["llm_calls_per_question"] == 2
+    assert s["invalid_citation_rate"] == round(1 / 4, 4)
+    assert s["critic_loops_triggered"] == 1 and s["tool_errors"] == 1
+    assert report.summarize("no_critic") == {}
