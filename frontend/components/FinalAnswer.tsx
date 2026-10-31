@@ -46,23 +46,69 @@ function ConfidenceBadge({ label, score }: { label: string; score: number }) {
   )
 }
 
-function renderAnswerWithCitations(text: string): React.ReactNode[] {
-  const parts = text.split(/(\[\d+\])/g)
+// Inline: **bold**, `code` and [n] citations.
+function renderInline(text: string, keyBase: string): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[\d+\])/g)
   return parts.map((part, i) => {
-    const match = part.match(/^\[(\d+)\]$/)
-    if (match) {
+    const key = `${keyBase}-${i}`
+    const cite = part.match(/^\[(\d+)\]$/)
+    if (cite) {
       return (
-        <span key={i} className="citation-ref" title={`Citation ${match[1]}`}>
-          {match[1]}
+        <span key={key} className="citation-ref" title={`Citation ${cite[1]}`}>
+          {cite[1]}
         </span>
       )
     }
-    return <span key={i}>{part}</span>
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={key} className="text-white">{part.slice(2, -2)}</strong>
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      return <code key={key} className="px-1 rounded bg-white/10">{part.slice(1, -1)}</code>
+    }
+    return <span key={key}>{part}</span>
   })
 }
 
+// The synthesizer writes light Markdown: headings, bullet and numbered lists, paragraphs.
+function renderAnswer(text: string): React.ReactNode[] {
+  const blocks: React.ReactNode[] = []
+  let list: { ordered: boolean; items: string[] } | null = null
+  const flush = () => {
+    if (!list) return
+    const items = list.items.map((it, j) => <li key={j}>{renderInline(it, `li${blocks.length}-${j}`)}</li>)
+    blocks.push(list.ordered
+      ? <ol key={blocks.length} className="list-decimal pl-5 space-y-1">{items}</ol>
+      : <ul key={blocks.length} className="list-disc pl-5 space-y-1">{items}</ul>)
+    list = null
+  }
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    const bullet = line.match(/^[-*•]\s+(.*)$/)
+    const numbered = line.match(/^\d+[.)]\s+(.*)$/)
+    const heading = line.match(/^#{1,4}\s+(.*)$/)
+    if (bullet || numbered) {
+      const ordered = Boolean(numbered)
+      if (!list || list.ordered !== ordered) {
+        flush()
+        list = { ordered, items: [] }
+      }
+      list.items.push((bullet ?? numbered)![1])
+      continue
+    }
+    flush()
+    if (!line) continue
+    if (heading) {
+      blocks.push(<h4 key={blocks.length} className="font-semibold text-white mt-2">{renderInline(heading[1], `h${blocks.length}`)}</h4>)
+    } else {
+      blocks.push(<p key={blocks.length}>{renderInline(line, `p${blocks.length}`)}</p>)
+    }
+  }
+  flush()
+  return blocks
+}
+
 export default function FinalAnswer({ answer, citations, confidenceScores }: Props) {
-  const renderedAnswer = useMemo(() => renderAnswerWithCitations(answer), [answer])
+  const renderedAnswer = useMemo(() => renderAnswer(answer), [answer])
   const hasConfidence = Object.keys(confidenceScores).length > 0
   const hasCitations = citations.length > 0
 
@@ -85,10 +131,10 @@ export default function FinalAnswer({ answer, citations, confidenceScores }: Pro
 
       {/* Answer body */}
       <div
-        className="rounded-xl p-5 border text-sm leading-7"
+        className="rounded-xl p-5 border text-sm leading-7 space-y-3"
         style={{ background: 'var(--surface)', borderColor: 'var(--border)', color: 'var(--foreground)' }}
       >
-        <p>{renderedAnswer}</p>
+        {renderedAnswer}
       </div>
 
       {/* Citations */}

@@ -41,3 +41,6 @@ out/
 # Secrets
 *.pem
 *.key
+
+# TypeScript build cache
+*.tsbuildinfo
