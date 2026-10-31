@@ -18,10 +18,11 @@ def test_summary_aggregates_runs_and_scores(tmp_path, monkeypatch):
         {"id": "q2", "citations": [{}], "invalid_citations": [7], "critic_iterations": 1, "tool_errors": ["x"],
          "seconds": 20.0, "usage": usage},
     ])
-    _write(tmp_path / "scores" / "critic.jsonl", [
-        {"id": "q1", "faithfulness": 1.0, "answer_relevancy": 0.9, "context_recall": 0.5},
-        {"id": "q2", "faithfulness": 0.8, "answer_relevancy": None, "context_recall": 1.0},
-    ])
+    _write(tmp_path / "scores" / "critic__faithfulness.jsonl", [{"id": "q1", "faithfulness": 1.0},
+                                                                 {"id": "q2", "faithfulness": 0.8}])
+    _write(tmp_path / "scores" / "critic__answer_relevancy.jsonl", [{"id": "q1", "answer_relevancy": 0.9}])
+    _write(tmp_path / "scores" / "critic__context_recall.jsonl", [{"id": "q1", "context_recall": 0.5},
+                                                                   {"id": "q2", "context_recall": 1.0}])
     s = report.summarize("critic")
     assert s["faithfulness"]["mean"] == 0.9 and s["faithfulness"]["n"] == 2
     assert s["answer_relevancy"]["n"] == 1          # a metric the judge could not score is left out, not zeroed

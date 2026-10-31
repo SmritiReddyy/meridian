@@ -5,10 +5,15 @@
   answer_relevancy   how directly the answer addresses the question
   context_recall     share of the reference answer's claims found in the retrieved sources
 
-The judge is a model on the same provider (configs: llm.models.judge). Its
-calls go through a LangChain SQLite cache, so re-scoring costs nothing and an
-interrupted run picks up where it stopped. Scores per question are written to
-results/scores/<config>.jsonl.
+Each metric has its own judge model (configs: evaluation.judges), the same one for
+every answer in both configurations, so scores are comparable across them. Using
+three judges also spreads the work over three daily token budgets. Faithfulness
+is never judged by the model that wrote the answers.
+
+Scores go to results/scores/<config>__<metric>.jsonl, one line per answer. A
+score the judge could not produce (rate limit, unparseable reply) is not
+written, so the next run retries it; judge calls go through a SQLite cache, so
+nothing already answered is paid for twice.
 """
 from __future__ import annotations
 
@@ -50,42 +55,75 @@ class LocalEmbeddings(Embeddings):
         return self._embedder.embed([text])[0].tolist()
 
 
-def judge(settings: Settings) -> tuple[LangchainLLMWrapper, LangchainEmbeddingsWrapper]:
+def judge_llm(settings: Settings, model: str) -> LangchainLLMWrapper:
     provider = settings.get("llm.provider")
     p = settings.get(f"llm.providers.{provider}")
-    set_llm_cache(SQLiteCache(database_path=str(ROOT / "data" / "judge_cache.sqlite")))
-    chat = ChatOpenAI(model=settings.get("llm.models.judge"), base_url=p["base_url"],
-                      api_key=os.environ[p["api_key_env"]], temperature=0, max_retries=10, timeout=180,
-                      max_tokens=4096)   # room for the judge's longer verdict lists
-    emb = LocalEmbeddings(settings.get("memory.embedding_model"))
+    extra = dict((settings.get("llm.model_params") or {}).get(model) or {})
+    extra.pop("max_tokens_floor", None)
+    chat = ChatOpenAI(model=model, base_url=p["base_url"], api_key=os.environ[p["api_key_env"]], temperature=0,
+                      max_retries=10, timeout=180, max_tokens=4096,   # room for long verdict lists
+                      **({"reasoning_effort": extra["reasoning_effort"]} if "reasoning_effort" in extra else {}))
     # Groq rejects n > 1; bypass_n makes RAGAS ask n times instead (answer relevancy uses 3).
-    return LangchainLLMWrapper(chat, bypass_n=True), LangchainEmbeddingsWrapper(emb)
+    return LangchainLLMWrapper(chat, bypass_n=True)
 
 
-def score_config(settings: Settings, config: str) -> list[dict]:
-    runs = [json.loads(line) for line in (RUNS / f"{config}.jsonl").read_text().splitlines() if line.strip()]
+def metric_object(name: str, llm: LangchainLLMWrapper, emb: LangchainEmbeddingsWrapper):
+    if name == "faithfulness":
+        return Faithfulness(llm=llm)
+    if name == "answer_relevancy":
+        return ResponseRelevancy(llm=llm, embeddings=emb)
+    return LLMContextRecall(llm=llm)
+
+
+def _read(path: Path) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    return {r["id"]: r for r in (json.loads(l) for l in path.read_text().splitlines() if l.strip())}
+
+
+def scores_path(config: str, metric: str) -> Path:
+    return SCORES / f"{config}__{metric}.jsonl"
+
+
+def load_scores(config: str) -> dict[str, dict]:
+    """{question id: {metric: score}} merged from the per-metric files."""
+    merged: dict[str, dict] = {}
+    for m in METRICS:
+        for qid, row in _read(scores_path(config, m)).items():
+            merged.setdefault(qid, {"id": qid, "config": config})[m] = row[m]
+    return merged
+
+
+def score_config(settings: Settings, config: str, metrics: tuple[str, ...] = METRICS) -> dict[str, dict]:
+    runs = list(_read(RUNS / f"{config}.jsonl").values())
     SCORES.mkdir(parents=True, exist_ok=True)
-    out = SCORES / f"{config}.jsonl"
-    have = {json.loads(line)["id"] for line in out.read_text().splitlines()} if out.exists() else set()
-    todo = [r for r in runs if r["id"] not in have]
-    if todo:
-        llm, emb = judge(settings)
-        metrics = [Faithfulness(llm=llm), ResponseRelevancy(llm=llm, embeddings=emb), LLMContextRecall(llm=llm)]
-        # A few at a time: the free tier allows ~30 requests a minute.
-        for i in range(0, len(todo), 5):
+    set_llm_cache(SQLiteCache(database_path=str(ROOT / "data" / "judge_cache.sqlite")))
+    emb = LangchainEmbeddingsWrapper(LocalEmbeddings(settings.get("memory.embedding_model")))
+    judges = settings.get("evaluation.judges")
+    for name in metrics:
+        out = scores_path(config, name)
+        have = _read(out)
+        todo = [r for r in runs if r["id"] not in have]
+        if not todo:
+            continue
+        metric = metric_object(name, judge_llm(settings, judges[name]), emb)
+        for i in range(0, len(todo), 5):   # small batches: each judge allows ~30 requests a minute
             batch = todo[i:i + 5]
             ds = EvaluationDataset.from_list([{"user_input": r["question"], "response": r["answer"],
                                                "retrieved_contexts": r["contexts"] or [""],
                                                "reference": r["reference"]} for r in batch])
-            result = evaluate(ds, metrics=metrics, llm=llm, embeddings=emb, show_progress=False,
+            result = evaluate(ds, metrics=[metric], show_progress=False,
                               run_config=RunConfig(max_workers=2, max_retries=10, max_wait=90, timeout=240))
-            rows = result.to_pandas().to_dict("records")
+            written = 0
             with out.open("a") as f:
-                for r, row in zip(batch, rows):
-                    scores = {m: _clean(row.get(m)) for m in METRICS}
-                    f.write(json.dumps({"id": r["id"], "config": config, **scores}) + "\n")
-            print(f"[{config}] scored {min(i + 5, len(todo))}/{len(todo)}", flush=True)
-    return [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
+                for r, row in zip(batch, result.to_pandas().to_dict("records")):
+                    v = _clean(row.get(name))
+                    if v is not None:   # a missing score is retried next run, not stored as a gap
+                        f.write(json.dumps({"id": r["id"], "config": config, name: v, "judge": judges[name]}) + "\n")
+                        written += 1
+            print(f"[{config}] {name}: {len(_read(out))}/{len(runs)} scored ({written}/{len(batch)} in this batch)",
+                  flush=True)
+    return load_scores(config)
 
 
 def _clean(v) -> float | None:

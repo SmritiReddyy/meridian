@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from llm.client import LLM, OpenAICompatibleLLM, ResponseCache, UsageMeter
 
 ROOT = Path(__file__).resolve().parent.parent
-ROLES = ("planner", "researcher", "critic", "synthesizer", "judge")
+ROLES = ("planner", "researcher", "critic", "synthesizer")
 
 
 @dataclass

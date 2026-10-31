@@ -14,7 +14,6 @@ llm:
     researcher: qwen/qwen3.8-27b        # writes search queries: fast and cheap is enough
     critic: openai/gpt-oss-120b         # follows the coverage instructions; 20b repeated gaps verbatim
     synthesizer: openai/gpt-oss-120b
-    judge: qwen/qwen3.8-27b             # RAGAS; not the model that wrote the answers
   # Extra request parameters per model. gpt-oss models reason before answering and
   # the reasoning counts against max_tokens, hence low effort and a higher floor.
   model_params:
@@ -45,3 +44,12 @@ memory:
   db_path: data/meridian.sqlite
   semantic_index_dir: data/semantic
   embedding_model: BAAI/bge-small-en-v1.5
+
+evaluation:
+  # One judge per RAGAS metric, the same for every answer in both configurations.
+  # Faithfulness is never judged by the synthesizer's own model. Three judges also
+  # means three daily token budgets (Groq's free tier allows 200k tokens a day each).
+  judges:
+    faithfulness: qwen/qwen3.8-27b
+    context_recall: openai/gpt-oss-20b
+    answer_relevancy: openai/gpt-oss-120b

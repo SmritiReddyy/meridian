@@ -16,6 +16,8 @@ def main() -> None:
     ap.add_argument("step", choices=["run", "score", "report", "all"])
     ap.add_argument("--limit", type=int, default=None, help="only the first N questions")
     ap.add_argument("--config", choices=list(CONFIGS), action="append", help="default: both")
+    ap.add_argument("--metric", choices=["faithfulness", "answer_relevancy", "context_recall"], action="append",
+                    help="score only these metrics (default: all); each has its own judge, so they can run in parallel")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
     settings = load_settings()
@@ -35,8 +37,9 @@ def main() -> None:
     if args.step in ("score", "all"):
         from evaluation.score import score_config
 
+        metrics = tuple(args.metric) if args.metric else ("faithfulness", "answer_relevancy", "context_recall")
         for c in configs:
-            score_config(settings, c)
+            score_config(settings, c, metrics)
     if args.step in ("report", "all"):
         print(json.dumps(report(settings), indent=2))
 
